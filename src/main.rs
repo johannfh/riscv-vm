@@ -20,7 +20,7 @@ fn main() {
         0x93, 0x80, 0x10, 0x00, // addi x1, x1, 1 (x1 = 4 + 1 = 5)
         0x93, 0x80, 0x10, 0x00, // addi x1, x1, 1 (x1 = 5 + 1 = 6)
         // mov x2, x1
-        0b00010011, 0b10000001, 0x00, 0x00, // addi x2, x1, 0 (move x1 to x2)
+        0x13, 0x81, 0x00, 0x00, // addi x2, x1, 0 (move x1 to x2)
     ];
 
     let mut cpu = Cpu::with_program(&program);
