@@ -20,7 +20,7 @@ build: clean
 
 run: build
     @echo "Running program..."
-    cargo run
+    cargo run -- --program out/program
 
 
 hexyl:
