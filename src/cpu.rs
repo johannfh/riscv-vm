@@ -83,48 +83,9 @@ impl Cpu {
         );
 
         match instruction & 0x7f {
-            // Load upper immediate value into register
-            // https://msyksphinz-self.github.io/riscv-isadoc/html/rvi.html#lui
-            0b0110111 => {
-                // Destination register (rd) is bits 7-11
-                let rd = (instruction >> 7) & 0x1f;
-                assert!(rd != 0, "Cannot write to zero register (x0)");
-                // Immediate value (imm) is bits 12-31
-                let imm = instruction & 0xFFFFF;
-
-                // Load the immediate value into the destination register
-                let reg_value = (imm as u64) << 12;
-                self.gprs[rd as usize] = reg_value;
-            }
+            0b0110111 => self.handle_load_upper_immediate(instruction),
             // I-Type instructions
-            0b0010011 => {
-                // This is an immediate instruction
-                // The funct3 field is bits 12-14
-                let funct3 = instruction >> 12 & 0x7;
-                match funct3 {
-                    // Add immediate value to register
-                    // https://msyksphinz-self.github.io/riscv-isadoc/html/rvi.html#addi
-                    0b000 => {
-                        // Destination register (rd) is bits 7-11
-                        let rd = (instruction >> 7) & 0x1f;
-                        assert!(rd != 0, "Cannot write to zero register (x0)");
-                        // Source register (rs1) is bits 15-19
-                        let rs1 = (instruction >> 15) & 0x1f;
-                        // Immediate value (imm) is bits 20-31
-                        let imm = instruction >> 20 & 0xFFF;
-                        let sext_imm = sign_extend_u64_to_i64(imm as u64, 20);
-                        // Add the immediate value to the value in the source register
-                        let reg_value = self.gprs[rs1 as usize] as i64 + (sext_imm as i64);
-                        // Store the result in the destination register
-                        self.gprs[rd as usize] = reg_value as u64;
-                        trace!(
-                            "EXECUTING_INSTRUCTION: addi x{}, x{}, {} -> x{}",
-                            rd, rs1, sext_imm, rd
-                        );
-                    }
-                    _ => panic!("Unimplemented immediate instruction: {:#x}", instruction),
-                }
-            }
+            0b0010011 => self.handle_i_type_instruction(instruction),
 
             ins => panic!("Unimplemented opcode: {:#x}", ins),
         }
@@ -132,5 +93,73 @@ impl Cpu {
         self.pc += Self::WORD_SIZE;
         trace!("CPU_PC: {:#x}", self.pc);
         trace!("CPU_GPRS: {:?}", self.gprs);
+    }
+
+    /// Load upper immediate value into register
+    /// https://msyksphinz-self.github.io/riscv-isadoc/html/rvi.html#lui
+    fn handle_load_upper_immediate(&mut self, instruction: u32) {
+        assert!(
+            instruction & 0x7f == 0b0110111,
+            "Instruction is not a LUI (Load Upper Immediate) instruction"
+        );
+
+        // Destination register (rd) is bits 7-11
+        let rd = (instruction >> 7) & 0x1f;
+
+        // NOTE: The zero register (x0) is always 0x0.
+        // Setting it as rd discards the resulting value.
+        if rd == 0 {
+            return;
+        };
+
+        // Immediate value (imm) is bits 12-31
+        let imm = instruction & 0xFFFFF;
+
+        // Load the immediate value into the destination register
+        let reg_value = (imm as u64) << 12;
+        self.gprs[rd as usize] = reg_value;
+    }
+
+    fn handle_i_type_instruction(&mut self, instruction: u32) {
+        // This is an immediate instruction
+        // The funct3 field is bits 12-14
+        let funct3 = instruction >> 12 & 0x7;
+        match funct3 {
+            0b000 => self.handle_addi(instruction),
+            _ => panic!("Unimplemented I-Type instruction: {:#x}", instruction),
+        }
+    }
+
+    /// Add immediate value to register
+    /// https://msyksphinz-self.github.io/riscv-isadoc/html/rvi.html#addi
+    fn handle_addi(&mut self, instruction: u32) {
+        // Destination register (rd) is bits 7-11
+        let rd = (instruction >> 7) & 0x1f;
+
+        // NOTE: The zero register (x0) is always 0x0.
+        // Setting it as rd discards the resulting value.
+        if rd == 0 {
+            return;
+        };
+
+        // Source register (rs1) is bits 15-19
+        let rs1 = (instruction >> 15) & 0x1f;
+
+        // Immediate value (imm) is bits 20-31
+        let imm = instruction >> 20 & 0xFFF;
+
+        // Sign-extend the immediate value to 64 bits
+        let sext_imm = sign_extend_u64_to_i64(imm as u64, 20);
+
+        // Add the immediate value to the value in the source register
+        let reg_value = self.gprs[rs1 as usize] as i64 + (sext_imm as i64);
+
+        // Store the result in the destination register
+        self.gprs[rd as usize] = reg_value as u64;
+
+        trace!(
+            "EXECUTING_INSTRUCTION: addi x{}, x{}, {} -> x{}",
+            rd, rs1, sext_imm, rd
+        );
     }
 }
