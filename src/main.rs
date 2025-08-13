@@ -9,9 +9,6 @@ use crate::cpu::Cpu;
 #[macro_use]
 extern crate log;
 
-#[cfg(not(target_pointer_width = "64"))]
-compile_error!("This CPU implementation requires a 64-bit target architecture.");
-
 mod cpu;
 mod utils;
 
