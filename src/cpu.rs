@@ -1,6 +1,12 @@
+use std::io::Write;
+
 use memmap2::{MmapMut, MmapOptions};
 
-use crate::{format_u32_le_bits, utils::sign_extend_u64_to_i64};
+use crate::{
+    constants::{a0, a7},
+    format_u32_le_bits,
+    utils::sign_extend_u64_to_i64,
+};
 
 pub struct Cpu {
     /// # General Purpose Registers
@@ -82,11 +88,11 @@ impl Cpu {
             self.pc
         );
 
+        // https://five-embeddev.com/riscv-user-isa-manual/Priv-v1.12/opcode-map.html
         match instruction & 0x7f {
             0b0110111 => self.handle_load_upper_immediate(instruction),
-            // I-Type instructions
             0b0010011 => self.handle_i_type_instruction(instruction),
-
+            0b1110011 => self.handle_system_instruction(instruction),
             ins => panic!("Unimplemented opcode: {:#x}", ins),
         }
 
@@ -120,6 +126,7 @@ impl Cpu {
         self.gprs[rd as usize] = reg_value;
     }
 
+    /// Handle I-Type instructions.
     fn handle_i_type_instruction(&mut self, instruction: u32) {
         // This is an immediate instruction
         // The funct3 field is bits 12-14
@@ -161,5 +168,77 @@ impl Cpu {
             "EXECUTING_INSTRUCTION: addi x{}, x{}, {} -> x{}",
             rd, rs1, sext_imm, rd
         );
+    }
+
+    fn handle_system_instruction(&mut self, instruction: u32) {
+        assert!(
+            instruction & 0x7f == 0b1110011,
+            "Instruction is not a SYSTEM instruction"
+        );
+
+        // The destination register (rd) is bits 7-11
+        let rd = (instruction >> 7) & 0x1f;
+        assert!(
+            rd == 0,
+            "System instructions should not write to a destination register"
+        );
+
+        // The funct3 field is bits 12-14
+        let funct3 = instruction >> 12 & 0x7;
+        assert!(
+            funct3 == 0b000,
+            "System instructions should have funct3 = 0b000, got: {:#b}",
+            funct3
+        );
+
+        // The immediate value (imm) is bits 20-31
+        let imm = instruction >> 20 & 0xFFF;
+        match imm {
+            0x000 => self.handle_ecall(),
+            0x001 => self.handle_ebreak(),
+            _ => panic!("Unimplemented SYSTEM instruction with imm: {:#x}", imm),
+        }
+    }
+
+    /// Handle the `ecall` instruction (environment call).
+    /// This is a system call that allows the program to request services from the operating system.
+    /// TODO: Read for implementation details:
+    /// https://jborza.com/post/2021-04-21-ecalls-and-syscalls/
+    fn handle_ecall(&mut self) {
+        trace!("EXECUTING_INSTRUCTION: ecall");
+        match self.gprs[a7] {
+            1 => self.handle_ecall_print_char(),
+            10 => self.handle_ecall_exit(),
+            _ => {
+                panic!("Unimplemented ecall with a7 = {:#x}", self.gprs[a7]);
+            }
+        }
+    }
+
+    fn handle_ecall_print_char(&mut self) {
+        // The character to print is in x10 (a0)
+        let char_to_print = self.gprs[10] as u8;
+        if char_to_print == 0 {
+            // If the character is null, we do not print anything
+            return;
+        }
+        // Print the character to stdout
+        print!("{}", char::from(char_to_print));
+        // Flush stdout to ensure the character is printed immediately
+        std::io::stdout().flush().expect("Failed to flush stdout");
+    }
+
+    fn handle_ecall_exit(&mut self) {
+        // Exit the program
+        let exit_code = self.gprs[a0] as i32;
+        info!("Exiting with code: {}", exit_code);
+        std::process::exit(exit_code);
+    }
+
+    /// Handle the `ebreak` instruction (environment break).
+    /// This instruction is used to trigger a breakpoint in the program,
+    fn handle_ebreak(&mut self) {
+        trace!("EXECUTING_INSTRUCTION: ebreak");
+        // TODO: Handle EBREAK properly, e.g., by pausing execution and entering a debug mode
     }
 }

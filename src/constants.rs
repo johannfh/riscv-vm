@@ -12,7 +12,7 @@ macro_rules! register {
         ::paste::paste! {
             #[doc = "Register [`" $name "`] has the index: `" $value "`."]
             #[allow(non_upper_case_globals)]
-            pub const $name: u32 = $value;
+            pub const $name: usize = $value;
         }
     };
 }
@@ -34,7 +34,7 @@ macro_rules! register_alias {
             $(#[$attr])*
             #[doc = "Alias for register: [`" $name "`] -> [`" $alias "`]"]
             #[allow(non_upper_case_globals)]
-            pub const $name: u32 = $alias;
+            pub const $name: usize = $alias;
         }
     };
 }

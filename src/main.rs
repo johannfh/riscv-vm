@@ -36,7 +36,7 @@ fn main() {
     info!("Size of program: {}", ByteSize(program.len() as u64));
 
     let mut cpu = Cpu::with_program(&program);
-    for _ in 0..program.len() / 4 {
+    loop {
         cpu.tick();
     }
 }
