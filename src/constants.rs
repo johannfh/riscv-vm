@@ -112,88 +112,33 @@ register_alias! {
 }
 
 register_alias! {
-    /// Temporary register, Saved by caller.
-    t0, x5
-}
-
-register_alias! {
-    /// Temporary register, Saved by caller.
-    t1, x6
-}
-
-register_alias! {
-    /// Temporary register, Saved by caller.
-    t2, x7
-}
-
-register_alias! {
-    /// Saved register, Saved by callee.
-    s0, x8
-}
-
-register_alias! {
     /// Frame pointer, Saved by callee.
     fp, x8
 }
 
-register_alias! {
-    /// Saved register, Saved by callee.
-    s1, x9
-}
-
 // --- Argument registers a0-a7 -> x10-x17 ---
-
-register_alias! {
+register_alias_block! {
     /// Argument register, saved by caller.
-    a0, x10
+    (a0, x10), (a1, x11), (a2, x12), (a3, x13),
+    (a4, x14), (a5, x15), (a6, x16), (a7, x17)
 }
 
-register_alias! {
-    /// Argument register, saved by caller.
-    a1, x11
-}
-
-register_alias! {
-    /// Argument register, saved by caller.
-    a2, x12
-}
-
-register_alias! {
-    /// Argument register, saved by caller.
-    a3, x13
-}
-
-register_alias! {
-    /// Argument register, saved by caller.
-    a4, x14
-}
-
-register_alias! {
-    /// Argument register, saved by caller.
-    a5, x15
-}
-
-register_alias! {
-    /// Argument register, saved by caller.
-    a6, x16
-}
-
-register_alias! {
-    /// Argument register, saved by caller.
-    a7, x17
-}
-
-// --- Saved registers s2-s11 -> x18-x27 ---
+// --- Saved registers ---
+// s0-s1 -> x8-x9
+// s2-s11 -> x18-x27
 register_alias_block! {
     /// Saved register, saved by callee.
-    (s2, x18),
-    (s3, x19),
-    (s4, x20),
-    (s5, x21),
-    (s6, x22),
-    (s7, x23),
-    (s8, x24),
-    (s9, x25),
-    (s10, x26),
-    (s11, x27)
+    (s0, x8), (s1, x9), (s2, x18), (s3, x19),
+    (s4, x20), (s5, x21), (s6, x22), (s7, x23),
+    (s8, x24), (s9, x25), (s10, x26), (s11, x27)
 }
+
+// --- Temporary registers ---
+// t0-t2 -> x5-x7
+// t3-t6 -> x28-x31
+register_alias_block! {
+    /// Temporary register, saved by caller.
+    (t0, x5), (t1, x6), (t2, x7), (t3, x28),
+    (t4, x29), (t5, x30), (t6, x31)
+}
+
