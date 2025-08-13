@@ -126,7 +126,7 @@ impl Cpu {
                 }
             }
 
-            ins => panic!("Unimplemented instruction: {:#x}", ins),
+            ins => panic!("Unimplemented opcode: {:#x}", ins),
         }
 
         self.pc += Self::WORD_SIZE;
