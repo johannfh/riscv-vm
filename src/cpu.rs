@@ -1,10 +1,9 @@
-use std::io::Write;
-
-use memmap2::{MmapMut, MmapOptions};
+use std::io::{self, Write};
 
 use crate::{
     constants::{a0, a7},
     format_u32_le_bits,
+    monitored_memory::MonitoredMemory,
     utils::sign_extend_u64_to_i64,
 };
 
@@ -26,7 +25,7 @@ pub struct Cpu {
     /// The program counter (PC) register holds the address of the next instruction to be executed.
     pub pc: u64,
 
-    pub memory: MmapMut,
+    pub memory: MonitoredMemory,
 }
 
 impl Cpu {
@@ -36,20 +35,17 @@ impl Cpu {
     const WORD_SIZE: u64 = 4;
 
     /// Creates a new CPU instance with all registers initialized to zero.
-    pub fn new() -> Self {
-        let memory = MmapOptions::new()
-            .len(Self::MEMORY_SIZE as usize)
-            .map_anon()
-            .expect("Failed to create memory map");
-        Cpu {
+    pub fn new() -> io::Result<Self> {
+        let memory = MonitoredMemory::new(Self::MEMORY_SIZE as usize)?;
+        Ok(Cpu {
             gprs: [0; 32],
             pc: Self::START_ADDRESS,
             memory,
-        }
+        })
     }
 
-    pub fn with_program(program: &[u8]) -> Self {
-        let mut cpu = Cpu::new();
+    pub fn with_program(program: &[u8]) -> io::Result<Self> {
+        let mut cpu = Cpu::new()?;
         // Load the program into memory starting at address 0x8000_0000
         let start_address = Self::START_ADDRESS;
         for (i, &byte) in program.iter().enumerate() {
@@ -60,7 +56,12 @@ impl Cpu {
             cpu.memory[address] = byte;
         }
         cpu.pc = start_address;
-        cpu
+        Ok(cpu)
+    }
+
+    /// Returns the size of the CPU's memory in bytes.
+    pub fn memory_size(&self) -> usize {
+        self.memory.len()
     }
 
     pub fn tick(&mut self) {
@@ -225,7 +226,7 @@ impl Cpu {
         // Print the character to stdout
         print!("{}", char::from(char_to_print));
         // Flush stdout to ensure the character is printed immediately
-        std::io::stdout().flush().expect("Failed to flush stdout");
+        io::stdout().flush().expect("Failed to flush stdout");
     }
 
     fn handle_ecall_exit(&mut self) {
