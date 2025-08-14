@@ -13,7 +13,7 @@ build: clean
     @echo "Creating output directory..."
     mkdir -p out
     @echo "Building program..."
-    riscv64-unknown-elf-as program.S -o out/program.o
+    riscv64-unknown-elf-as program.asm -o out/program.o
     @echo "Extracting object file..."
     riscv64-unknown-elf-objcopy -O binary out/program.o out/program
     @echo "Build complete. Output is in 'out/program'."
