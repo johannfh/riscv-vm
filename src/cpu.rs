@@ -239,6 +239,6 @@ impl Cpu {
     /// This instruction is used to trigger a breakpoint in the program,
     fn handle_ebreak(&mut self) {
         trace!("EXECUTING_INSTRUCTION: ebreak");
-        // TODO: Handle EBREAK properly, e.g., by pausing execution and entering a debug mode
+        // TODO: Handle `ebreak` `properly`, e.g., by pausing execution and entering a debug mode
     }
 }
