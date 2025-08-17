@@ -1,4 +1,6 @@
-use crossbeam::channel::Receiver;
+use std::io::Write;
+
+use crossbeam::channel::{Receiver, Sender};
 
 use macroquad::prelude::*;
 
@@ -11,7 +13,12 @@ pub struct App {
 }
 
 impl App {
-    /// Creates a new [`App`].
+    /// Creates a new [`App`] with a channel to receive CPU events.
+    /// It returns a tuple containing the `App` instance and a receiver for application events.
+    /// # Arguments
+    /// * `cpu_events` - A receiver channel for CPU events.
+    /// # Returns
+    /// A tuple containing the `App` instance and a receiver for application events.
     pub fn new(cpu_events: Receiver<CpuEvent>) -> Self {
         App {
             cpu_events,
@@ -22,25 +29,27 @@ impl App {
 
     /// Runs the application.
     pub async fn run(&mut self) {
-        while self.is_running {
-            macroquad::window::clear_background(macroquad::color::BLACK);
-            if let Some(event) = self.cpu_events.try_recv().ok() {
-                log::trace!("Received CPU event: {:?}", event);
-                match event {
-                    CpuEvent::DrawCharacter { character } => {
-                        log::debug!("Drawing character: '{}'", character.escape_debug());
-                        self.text_buffer.push(character);
-                    }
-                    CpuEvent::Exit { exit_code } => {
-                        log::debug!("Exiting with code: {}", exit_code);
-                        self.text_buffer
-                            .push_str(&format!("\nExiting with code: {}", exit_code));
-                        self.is_running = false;
+        loop {
+            clear_background(macroquad::color::BLACK);
+            if self.is_running {
+                for event in self.cpu_events.try_iter() {
+                    log::trace!("Received CPU event: {:?}", event);
+                    match event {
+                        CpuEvent::DrawCharacter { character } => {
+                            log::debug!("Drawing character: '{}'", character.escape_debug());
+                            self.text_buffer.push(character);
+                        }
+                        CpuEvent::Exit { exit_code } => {
+                            log::debug!("Exiting with code: {}", exit_code);
+                            self.text_buffer
+                                .push_str(&format!("\nExiting with code: {}", exit_code));
+                            self.is_running = false;
+                        }
                     }
                 }
             }
 
-            macroquad::text::draw_multiline_text(
+            draw_multiline_text(
                 &self.text_buffer,
                 0.0,
                 16.0,
@@ -50,6 +59,11 @@ impl App {
             );
 
             next_frame().await;
+
+            if is_quit_requested() || !self.is_running {
+                log::info!("Quit requested by user.");
+                return;
+            }
         }
     }
 }

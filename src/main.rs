@@ -68,7 +68,8 @@ async fn main() {
         })
         .expect("Failed to spawn VM thread");
 
-    App::new(cpu_events).run().await;
+    let mut app = App::new(cpu_events);
+    app.run().await;
     info!("Virtual machine execution completed.");
 
     cpu_thread.join().expect("Failed to join VM thread");
