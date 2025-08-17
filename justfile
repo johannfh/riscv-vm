@@ -14,8 +14,8 @@ build: clean
     mkdir -p out
     @echo "Building program..."
     riscv64-unknown-elf-as program.asm -o out/program.o
-    @echo "Extracting object file..."
-    riscv64-unknown-elf-objcopy -O binary out/program.o out/program
+    @echo "Linking program..."
+    riscv64-unknown-elf-ld -T linker.ld out/program.o -o out/program
     @echo "Build complete. Output is in 'out/program'."
 
 run: build
