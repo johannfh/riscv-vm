@@ -1,5 +1,9 @@
 use std::io::{self, Write};
 
+use derive_more::Display;
+use goblin::elf::Elf;
+use log::{info, trace};
+
 use crate::{
     constants::{a0, a7},
     format_u32_le_bits,
@@ -26,47 +30,108 @@ pub struct Cpu {
     pub pc: u64,
 
     pub memory: MonitoredMemory,
+
+    pub is_running: bool,
+    pub exit_code: i32,
+    cpu_events: crossbeam::channel::Sender<CpuEvent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+pub enum CpuEvent {
+    DrawCharacter { character: char },
+    Exit { exit_code: i32 },
 }
 
 impl Cpu {
-    const START_ADDRESS: u64 = 0x8000_0000;
-    const MEMORY_SIZE: u64 = 1024 * 1024 * 1024 * 4; // 4GB memory
+    // TODO: Use virtual addresses and either 0x8000_0000 as the start address for the program
+    // or allow loading programs with arbitrary start addresses. Obtaining the start address
+    // from the ELF header seems to be a good idea.
+    const START_ADDRESS: u64 = 0x0000_0000;
     /// The size of a word in bytes. For RISC-V, this is typically 4 bytes (32 bits).
     const WORD_SIZE: u64 = 4;
 
     /// Creates a new CPU instance with all registers initialized to zero.
-    pub fn new() -> io::Result<Self> {
-        let memory = MonitoredMemory::new(Self::MEMORY_SIZE as usize)?;
-        Ok(Cpu {
-            gprs: [0; 32],
-            pc: Self::START_ADDRESS,
-            memory,
-        })
+    pub fn new(memory_size: usize) -> io::Result<(Self, crossbeam::channel::Receiver<CpuEvent>)> {
+        let memory = MonitoredMemory::new(memory_size)?;
+        let (send, recv) = crossbeam::channel::unbounded();
+
+        Ok((
+            Cpu {
+                gprs: [0; 32],
+                pc: Self::START_ADDRESS,
+                memory,
+                is_running: true,
+                exit_code: 0,
+                cpu_events: send,
+            },
+            recv,
+        ))
     }
 
-    pub fn with_program(program: &[u8]) -> io::Result<Self> {
-        let mut cpu = Cpu::new()?;
+    pub fn load_program(&mut self, program: &[u8]) -> anyhow::Result<()> {
         // Load the program into memory starting at address 0x8000_0000
-        let start_address = Self::START_ADDRESS;
-        for (i, &byte) in program.iter().enumerate() {
-            let address = (start_address + (i as u64)) as usize;
-            if address >= cpu.memory.len() {
-                panic!("Program exceeds memory bounds at address: {:#x}", address);
-            }
-            cpu.memory[address] = byte;
-        }
-        cpu.pc = start_address;
-        Ok(cpu)
+        let elf = Elf::parse(program)?;
+
+        assert!(elf.is_64, "Only 64-bit ELF files are supported");
+
+        let progbits_header = elf
+            .program_headers
+            .iter()
+            .filter(|ph| {
+                ph.p_type == goblin::elf::program_header::PT_LOAD
+                    && ph.p_flags & goblin::elf::program_header::PF_X != 0
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            progbits_header.len() == 1,
+            "Expected exactly one PT_LOAD segment with execute permission, found: {}",
+            progbits_header.len()
+        );
+        let progbits_header = progbits_header[0];
+
+        assert!(
+            progbits_header.p_vaddr == Self::START_ADDRESS,
+            "Program must start at address: {:#x}",
+            Self::START_ADDRESS
+        );
+
+        assert!(
+            progbits_header.p_filesz == progbits_header.p_memsz,
+            "Program file size must match memory size; seems to contain uninitialized data (.bss section)"
+        );
+
+        let start_address = progbits_header.p_vaddr;
+        let end_address = start_address + progbits_header.p_memsz;
+
+        let text_section = &program[progbits_header.p_offset as usize
+            ..(progbits_header.p_offset + progbits_header.p_filesz) as usize];
+        // INFO: Loading other sections (e.g., .data, .bss) is not implemented yet,
+        // but would happen here.
+        assert!(
+            text_section.len() == progbits_header.p_filesz as usize,
+            "Text section size mismatch: expected {}, got {}",
+            progbits_header.p_filesz,
+            text_section.len()
+        );
+
+        self.memory[start_address as usize..end_address as usize].copy_from_slice(text_section);
+        trace!(
+            "Program loaded into CPU memory at address {:#x} with size {} bytes",
+            start_address,
+            bytesize::ByteSize(text_section.len() as u64)
+        );
+
+        Ok(())
     }
 
     /// Returns the size of the CPU's memory in bytes.
     pub fn memory_size(&self) -> usize {
-        self.memory.len()
+        self.memory.size()
     }
 
     pub fn tick(&mut self) {
         // Fetch the instruction at the current program counter
-        if self.pc as usize + Self::WORD_SIZE as usize > self.memory.len() {
+        if self.pc as usize + Self::WORD_SIZE as usize > self.memory.size() {
             panic!("Instruction address out of bounds: {:#x}", self.pc);
         }
 
@@ -95,7 +160,7 @@ impl Cpu {
             0b0010011 => self.handle_i_type_instruction(instruction),
             0b1110011 => self.handle_system_instruction(instruction),
             ins => panic!("Unimplemented opcode: {:#x}", ins),
-        }
+        };
 
         self.pc += Self::WORD_SIZE;
         trace!("CPU_PC: {:#x}", self.pc);
@@ -224,7 +289,11 @@ impl Cpu {
             return;
         }
         // Print the character to stdout
-        print!("{}", char::from(char_to_print));
+        let character = char::from(char_to_print);
+        trace!("EXECUTING_INSTRUCTION: ecall print_char: '{}'", character);
+        self.cpu_events
+            .send(CpuEvent::DrawCharacter { character })
+            .expect("Failed to send render event");
         // Flush stdout to ensure the character is printed immediately
         io::stdout().flush().expect("Failed to flush stdout");
     }
@@ -232,8 +301,12 @@ impl Cpu {
     fn handle_ecall_exit(&mut self) {
         // Exit the program
         let exit_code = self.gprs[a0] as i32;
-        info!("Exiting with code: {}", exit_code);
-        std::process::exit(exit_code);
+        info!("Encountered ecall exit with code: {}", exit_code);
+        self.is_running = false;
+        self.exit_code = exit_code;
+        self.cpu_events
+            .send(CpuEvent::Exit { exit_code })
+            .expect("Failed to send exit event");
     }
 
     /// Handle the `ebreak` instruction (environment break).
@@ -241,5 +314,10 @@ impl Cpu {
     fn handle_ebreak(&mut self) {
         trace!("EXECUTING_INSTRUCTION: ebreak");
         // TODO: Handle `ebreak` `properly`, e.g., by pausing execution and entering a debug mode
+    }
+
+    #[inline]
+    pub fn is_halted(&self) -> bool {
+        !self.is_running
     }
 }

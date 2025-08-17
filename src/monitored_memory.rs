@@ -7,20 +7,14 @@ pub struct MonitoredMemory {
 }
 
 impl MonitoredMemory {
+    /// Creates a new instance of [`MonitoredMemory`] with the specified `size`.
     pub fn new(size: usize) -> io::Result<Self> {
         let inner = MmapOptions::new().len(size).map_anon()?;
         Ok(MonitoredMemory { inner })
     }
 
-    pub fn get(&self, address: usize) -> u8 {
-        self.inner[address]
-    }
-
-    pub fn set(&mut self, address: usize, value: u8) {
-        self.inner[address] = value;
-    }
-
-    pub fn len(&self) -> usize {
+    /// Returns the size of the [`MonitoredMemory`].
+    pub fn size(&self) -> usize {
         self.inner.len()
     }
 }
