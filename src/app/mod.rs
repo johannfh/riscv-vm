@@ -2,7 +2,7 @@ use std::io::Write;
 
 use crossbeam::channel::{Receiver, Sender};
 
-use macroquad::prelude::*;
+use macroquad::{miniquad::window::quit, prelude::*};
 
 use crate::cpu::CpuEvent;
 
@@ -58,12 +58,16 @@ impl App {
                 macroquad::color::WHITE,
             );
 
-            next_frame().await;
-
-            if is_quit_requested() || !self.is_running {
-                log::info!("Quit requested by user.");
-                return;
+            if is_key_pressed(KeyCode::Q) {
+                quit();
             }
+
+            if is_quit_requested() {
+                log::info!("Quit requested by user.");
+                self.is_running = false;
+            }
+
+            next_frame().await;
         }
     }
 }
