@@ -142,3 +142,7 @@ register_alias_block! {
     (t4, x29), (t5, x30), (t6, x31)
 }
 
+
+pub const ECALL_WRITE: u64 = 64;
+pub const ECALL_EXIT: u64 = 93;
+

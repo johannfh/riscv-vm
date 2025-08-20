@@ -2,10 +2,10 @@ use std::io::{self, Write};
 
 use derive_more::Display;
 use goblin::elf::Elf;
-use log::{info, trace};
+use log::{debug, info, trace};
 
 use crate::{
-    constants::{a0, a7},
+    constants::{ECALL_EXIT, ECALL_WRITE, a0, a1, a2, a7},
     format_u32_le_bits,
     monitored_memory::MonitoredMemory,
     utils::sign_extend_u64_to_i64,
@@ -36,17 +36,13 @@ pub struct Cpu {
     cpu_events: crossbeam::channel::Sender<CpuEvent>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Display)]
 pub enum CpuEvent {
-    DrawCharacter { character: char },
+    Write { text: String },
     Exit { exit_code: i32 },
 }
 
 impl Cpu {
-    // TODO: Use virtual addresses and either 0x8000_0000 as the start address for the program
-    // or allow loading programs with arbitrary start addresses. Obtaining the start address
-    // from the ELF header seems to be a good idea.
-    const START_ADDRESS: u64 = 0x0000_0000;
     /// The size of a word in bytes. For RISC-V, this is typically 4 bytes (32 bits).
     const WORD_SIZE: u64 = 4;
 
@@ -58,7 +54,7 @@ impl Cpu {
         Ok((
             Cpu {
                 gprs: [0; 32],
-                pc: Self::START_ADDRESS,
+                pc: 0x0,
                 memory,
                 is_running: true,
                 exit_code: 0,
@@ -74,52 +70,32 @@ impl Cpu {
 
         assert!(elf.is_64, "Only 64-bit ELF files are supported");
 
-        let progbits_header = elf
+        for phdr in elf
             .program_headers
             .iter()
-            .filter(|ph| {
-                ph.p_type == goblin::elf::program_header::PT_LOAD
-                    && ph.p_flags & goblin::elf::program_header::PF_X != 0
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            progbits_header.len() == 1,
-            "Expected exactly one PT_LOAD segment with execute permission, found: {}",
-            progbits_header.len()
-        );
-        let progbits_header = progbits_header[0];
+            .filter(|ph| ph.p_type == goblin::elf::program_header::PT_LOAD)
+        {
+            dbg!(&phdr);
+            let start_address = phdr.p_vaddr as usize;
+            let end_address = start_address + phdr.p_memsz as usize;
+            if end_address > self.memory.size() {
+                return Err(anyhow::anyhow!(
+                    "Program exceeds memory bounds: {} > {}",
+                    end_address,
+                    self.memory.size()
+                ));
+            }
+            let data = &program[phdr.p_offset as usize..(phdr.p_offset + phdr.p_filesz) as usize];
+            self.memory[start_address..end_address].copy_from_slice(data);
+            debug!(
+                "Loaded program segment from offset {} to {} (size: {})",
+                phdr.p_offset,
+                phdr.p_offset + phdr.p_filesz,
+                phdr.p_filesz
+            );
+        }
 
-        assert!(
-            progbits_header.p_vaddr == Self::START_ADDRESS,
-            "Program must start at address: {:#x}",
-            Self::START_ADDRESS
-        );
-
-        assert!(
-            progbits_header.p_filesz == progbits_header.p_memsz,
-            "Program file size must match memory size; seems to contain uninitialized data (.bss section)"
-        );
-
-        let start_address = progbits_header.p_vaddr;
-        let end_address = start_address + progbits_header.p_memsz;
-
-        let text_section = &program[progbits_header.p_offset as usize
-            ..(progbits_header.p_offset + progbits_header.p_filesz) as usize];
-        // INFO: Loading other sections (e.g., .data, .bss) is not implemented yet,
-        // but would happen here.
-        assert!(
-            text_section.len() == progbits_header.p_filesz as usize,
-            "Text section size mismatch: expected {}, got {}",
-            progbits_header.p_filesz,
-            text_section.len()
-        );
-
-        self.memory[start_address as usize..end_address as usize].copy_from_slice(text_section);
-        trace!(
-            "Program loaded into CPU memory at address {:#x} with size {} bytes",
-            start_address,
-            bytesize::ByteSize(text_section.len() as u64)
-        );
+        self.pc = elf.entry;
 
         Ok(())
     }
@@ -159,7 +135,9 @@ impl Cpu {
             0b0110111 => self.handle_load_upper_immediate(instruction),
             0b0010011 => self.handle_i_type_instruction(instruction),
             0b1110011 => self.handle_system_instruction(instruction),
-            ins => panic!("Unimplemented opcode: {:#x}", ins),
+            0b0011011 => self.handle_op32_type_instruction(instruction),
+            0b0000011 => self.handle_other_i_type_instruction(instruction),
+            ins => panic!("Unimplemented opcode: {:#x} | {:#b}", ins, ins),
         };
 
         self.pc += Self::WORD_SIZE;
@@ -236,6 +214,133 @@ impl Cpu {
         );
     }
 
+    fn handle_other_i_type_instruction(&mut self, instruction: u32) {
+        // This is an immediate instruction
+        // The funct3 field is bits 12-14
+        let funct3 = instruction >> 12 & 0x7;
+        match funct3 {
+            0b000 => self.handle_load_byte(instruction),
+            0b010 => self.handle_load_word(instruction),
+            _ => panic!("Unimplemented other I-Type instruction: {:#b}", funct3),
+        }
+    }
+
+    fn handle_load_byte(&mut self, instruction: u32) {
+        assert!(
+            instruction & 0x7f == 0b0000011,
+            "Instruction is not a LOAD instruction"
+        );
+
+        // Destination register (rd) is bits 7-11
+        let rd = (instruction >> 7) & 0x1f;
+
+        // NOTE: The zero register (x0) is always 0x0.
+        // Setting it as rd discards the resulting value.
+        if rd == 0 {
+            return;
+        };
+
+        // Source register (rs1) is bits 15-19
+        let rs1 = (instruction >> 15) & 0x1f;
+
+        // Immediate value (imm) is bits 20-31
+        let imm = instruction >> 20 & 0xFFF;
+
+        let sext_imm = sign_extend_u64_to_i64(imm as u64, 12);
+
+        // Calculate the effective address
+        let effective_address = self.gprs[rs1 as usize] as i64 + sext_imm;
+
+        // Load the byte from memory at the effective address
+        let byte_value = self.memory[effective_address as usize];
+
+        // Set the value in the destination register
+        self.gprs[rd as usize] = byte_value as u64;
+
+        trace!(
+            "EXECUTING_INSTRUCTION: lb x{}, {}(x{}) -> x{}",
+            rd, sext_imm, rs1, rd
+        );
+    }
+
+    fn handle_load_word(&mut self, instruction: u32) {
+        assert!(
+            instruction & 0x7f == 0b0000011,
+            "Instruction is not a LOAD instruction"
+        );
+
+        // Destination register (rd) is bits 7-11
+        let rd = (instruction >> 7) & 0x1f;
+
+        // NOTE: The zero register (x0) is always 0x0.
+        // Setting it as rd discards the resulting value.
+        if rd == 0 {
+            return;
+        };
+
+        // Source register (rs1) is bits 15-19
+        let rs1 = (instruction >> 15) & 0x1f;
+
+        // Immediate value (imm) is bits 20-31
+        let imm = instruction >> 20 & 0xFFF;
+
+        let sext_imm = sign_extend_u64_to_i64(imm as u64, 12);
+
+        // Calculate the effective address
+        let effective_address = self.gprs[rs1 as usize] as i64 + sext_imm;
+
+        // Load the word from memory at the effective address
+        let word_value = u32::from_le_bytes(
+            self.memory[effective_address as usize..effective_address as usize + 4]
+                .try_into()
+                .expect("Failed to convert bytes to u32"),
+        );
+
+        // Set the value in the destination register
+        self.gprs[rd as usize] = word_value as u64;
+
+        trace!(
+            "EXECUTING_INSTRUCTION: lw x{}, {}(x{}) -> x{}",
+            rd, sext_imm, rs1, rd
+        );
+    }
+
+    fn handle_op32_type_instruction(&mut self, instruction: u32) {
+        let funct3 = instruction >> 12 & 0x7;
+        match funct3 {
+            0b000 => self.handle_addiw(instruction),
+            _ => panic!("Unimplemented OP32 instruction: {:#x}", instruction),
+        }
+    }
+
+    fn handle_addiw(&mut self, instruction: u32) {
+        // Destination register (rd) is bits 7-11
+        let rd = (instruction >> 7) & 0x1f;
+
+        // NOTE: The zero register (x0) is always 0x0.
+        // Setting it as rd discards the resulting value.
+        if rd == 0 {
+            return;
+        };
+
+        // Source register (rs1) is bits 15-19
+        let rs1 = (instruction >> 15) & 0x1f;
+
+        // Immediate value (imm) is bits 20-31
+        let imm = instruction >> 20 & 0xFFF;
+
+        // Sign-extend the immediate value to 64 bits
+        let sext_imm = sign_extend_u64_to_i64(imm as u64, 20);
+
+        // Add the immediate value to the value in the source register
+        self.gprs[rd as usize] = (self.gprs[rs1 as usize] as i32 + (sext_imm as i32)) as u64;
+
+        trace!(
+            "EXECUTING_INSTRUCTION: addiw x{}, x{}, {} -> x{}",
+            rd, rs1, sext_imm, rd
+        );
+    }
+
     fn handle_system_instruction(&mut self, instruction: u32) {
         assert!(
             instruction & 0x7f == 0b1110011,
@@ -270,35 +375,51 @@ impl Cpu {
     /// This is a system call that allows the program to request services from the operating system.
     /// TODO: Read for implementation details:
     /// https://jborza.com/post/2021-04-21-ecalls-and-syscalls/
+    /// https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
     fn handle_ecall(&mut self) {
         trace!("EXECUTING_INSTRUCTION: ecall");
         match self.gprs[a7] {
-            1 => self.handle_ecall_print_char(),
-            10 => self.handle_ecall_exit(),
+            64 => self.handle_ecall_write(),
+            93 => self.handle_ecall_exit(),
             _ => {
                 panic!("Unimplemented ecall with a7 = {:#x}", self.gprs[a7]);
             }
         }
     }
 
-    fn handle_ecall_print_char(&mut self) {
-        // The character to print is in x10 (a0)
-        let char_to_print = self.gprs[10] as u8;
-        if char_to_print == 0 {
-            // If the character is null, we do not print anything
-            return;
-        }
-        // Print the character to stdout
-        let character = char::from(char_to_print);
-        trace!("EXECUTING_INSTRUCTION: ecall print_char: '{}'", character);
+    fn handle_ecall_write(&mut self) {
+        assert!(
+            self.gprs[a7] == ECALL_WRITE,
+            "ecall write should have a7 = {}, got: {:#x}",
+            ECALL_WRITE,
+            self.gprs[a7],
+        );
+
+        let fd = (self.gprs[a0] & 0x1f) as usize; // File descriptor
+        let text_ptr = self.gprs[a1] as usize; // Pointer to the text to write
+        let text_len = self.gprs[a2] as usize; // Length of the text to write
+
+        _ = fd; // Currently, we only support custom file descriptors
+
+        // Read the text from memory
+        let text_bytes = &self.memory[text_ptr..text_ptr + text_len];
+        let text =
+            String::from_utf8(text_bytes.to_vec()).expect("Failed to convert bytes to String");
+        trace!("Writing text: '{}'", text.escape_debug());
+        // Send the text to the application via the CPU events channel
         self.cpu_events
-            .send(CpuEvent::DrawCharacter { character })
-            .expect("Failed to send render event");
-        // Flush stdout to ensure the character is printed immediately
-        io::stdout().flush().expect("Failed to flush stdout");
+            .send(CpuEvent::Write { text })
+            .expect("Failed to send write event");
     }
 
     fn handle_ecall_exit(&mut self) {
+        assert!(
+            self.gprs[a7] == ECALL_EXIT,
+            "ecall exit should have a7 = {}, got: {:#x}",
+            ECALL_EXIT,
+            self.gprs[a7],
+        );
+
         // Exit the program
         let exit_code = self.gprs[a0] as i32;
         info!("Encountered ecall exit with code: {}", exit_code);

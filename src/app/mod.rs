@@ -35,14 +35,15 @@ impl App {
                 for event in self.cpu_events.try_iter() {
                     log::trace!("Received CPU event: {:?}", event);
                     match event {
-                        CpuEvent::DrawCharacter { character } => {
+                        CpuEvent::Write { text: character } => {
                             log::debug!("Drawing character: '{}'", character.escape_debug());
-                            self.text_buffer.push(character);
+                            self.text_buffer.push_str(&character);
                         }
                         CpuEvent::Exit { exit_code } => {
                             log::debug!("Exiting with code: {}", exit_code);
                             self.text_buffer
                                 .push_str(&format!("\nExiting with code: {}", exit_code));
+                            self.text_buffer.push_str("\nPress 'Q' to quit.");
                             self.is_running = false;
                         }
                     }

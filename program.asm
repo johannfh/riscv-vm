@@ -1,48 +1,25 @@
-.equ ECALL_PRINT_REG, 1
-.equ ECALL_EXIT, 10
+.equ ECALL_WRITE, 64
+.equ ECALL_EXIT, 93
+
+.section .data
+    message: .asciz "Hello World!\n"
+    length: .word 13
+
 
 .section .text
 .global _start
 
 _start:
-    li a7, ECALL_PRINT_REG
-    li a0, 'H'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'e'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'l'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'l'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'o'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, ' '
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'W'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'o'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'r'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'l'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, 'd'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, '!'
-    ecall
-    li a7, ECALL_PRINT_REG
-    li a0, '\n
+    # WARN: Specifying the file descriptor is UNSUPPORTED / will be IGNORED
+    # NOTE: Will likely be 1/2/3 for stdout/stderr/stdin
+    la a0, 0
+    # Load the address of the message into a0
+    la a1, message          # Load address of the message into a0
+    # Load the length of the message into a1
+    lw a2, length           # Load the length of the message into a1
+    # Load the ecall number for writing to stdout into a7
+    li a7, ECALL_WRITE      # Load the ecall number for writing to stdout
+    # Make the ecall to write the message
     ecall
 
     # Make the ecall to exit the program
