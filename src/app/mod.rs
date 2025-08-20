@@ -1,6 +1,4 @@
-use std::io::Write;
-
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::Receiver;
 
 use macroquad::{miniquad::window::quit, prelude::*};
 

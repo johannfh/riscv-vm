@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io;
 
 use derive_more::Display;
 use goblin::elf::Elf;
